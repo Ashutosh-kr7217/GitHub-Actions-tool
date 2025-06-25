@@ -1,0 +1,31 @@
+---
+- name: Update all packages
+  yum:
+    name: '*'
+    state: latest
+    update_only: yes
+
+- name: Set SELinux to permissive mode
+  selinux:
+    policy: targeted
+    state: permissive
+
+- name: Ensure important security packages are installed
+  yum:
+    name:
+      - fail2ban
+      - unzip
+      - vim
+      - htop
+    state: present
+
+- name: Configure SSH for security
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^PermitRootLogin', line: 'PermitRootLogin no' }
+    - { regexp: '^PasswordAuthentication', line: 'PasswordAuthentication no' }
+  notify: restart sshd

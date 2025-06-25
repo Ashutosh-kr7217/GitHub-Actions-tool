@@ -1,0 +1,39 @@
+---
+- name: Verify web application deployment
+  hosts: tag_Project_secure_app_infra
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Check if nginx is running
+      systemd:
+        name: nginx
+        state: started
+      register: nginx_status
+      
+    - name: Verify nginx is running
+      assert:
+        that: nginx_status.status.ActiveState == "active"
+        fail_msg: "Nginx is not running!"
+        success_msg: "Nginx is running correctly"
+        
+    - name: Test web page locally
+      uri:
+        url: http://localhost
+        return_content: yes
+      register: webpage
+      
+    - name: Verify web page content
+      assert:
+        that: "'Welcome to the DevOps NGINX Demo Site' in webpage.content"
+        fail_msg: "Website content is incorrect or missing!"
+        success_msg: "Website content verified successfully"
+        
+    - name: Check for 404 errors in nginx logs
+      shell: grep -c "404" /var/log/nginx/error.log || true
+      register: error_count
+      changed_when: false
+      
+    - name: Report error count
+      debug:
+        msg: "Found {{ error_count.stdout }} 404 errors in nginx logs"

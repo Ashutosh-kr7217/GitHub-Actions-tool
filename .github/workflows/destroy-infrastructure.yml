@@ -1,0 +1,293 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to destroy (dev, staging, prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      confirmation:
+        description: 'Type "DESTROY-dev" (case-sensitive) to confirm deletion'
+        required: true
+        type: string
+      backup_state:
+        description: 'Create backup of Terraform state before destroying'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VAR_environment: ${{ github.event.inputs.environment }}
+
+jobs:
+  validate-input:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        id: check_confirmation
+        run: |
+          EXPECTED="DESTROY-${{ github.event.inputs.environment }}"
+          RECEIVED="${{ github.event.inputs.confirmation }}"
+          
+          echo "Expected confirmation: $EXPECTED"
+          echo "Received confirmation: $RECEIVED"
+          
+          if [[ "$RECEIVED" != "$EXPECTED" ]]; then
+            echo "❌ Confirmation text must be exactly '$EXPECTED'. Cancelling operation."
+            exit 1
+          else
+            echo "✅ Confirmation matches. Proceeding with deletion."
+          fi
+          
+  backup-state:
+    needs: validate-input
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.backup_state == 'true' }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+      
+      - name: Backup Terraform state
+        run: |
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          ENVIRONMENT=${{ github.event.inputs.environment }}
+          
+          # Create backup directory if it doesn't exist
+          aws s3api put-object --bucket tf-state-aws-infra01 --key secure-app-infra/$ENVIRONMENT/backups/ || true
+          
+          # Create backup of Terraform state
+          if aws s3 ls s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/terraform.tfstate; then
+            aws s3 cp \
+              s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/terraform.tfstate \
+              s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/backups/terraform.tfstate.$TIMESTAMP
+              
+            echo "✅ Created backup at s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/backups/terraform.tfstate.$TIMESTAMP"
+          else 
+            echo "⚠️ No state file found to backup for environment $ENVIRONMENT"
+          fi
+        continue-on-error: true
+          
+  destroy-infrastructure:
+    needs: [validate-input, backup-state]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+          
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.0
+
+      - name: Reset any scheduled deletions for secrets
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          SECRET_ID="secure-app-infra/$ENV/app"
+          
+          # Check if the secret exists and is scheduled for deletion
+          if aws secretsmanager describe-secret --secret-id "$SECRET_ID" &>/dev/null; then
+            DELETE_DATE=$(aws secretsmanager describe-secret --secret-id "$SECRET_ID" --query "DeletedDate" --output text)
+            
+            if [[ "$DELETE_DATE" != "None" && -n "$DELETE_DATE" ]]; then
+              echo "Secret '$SECRET_ID' is scheduled for deletion, forcing immediate deletion..."
+              aws secretsmanager delete-secret --secret-id "$SECRET_ID" --force-delete-without-recovery
+              sleep 5
+              echo "Secret deletion forced."
+            fi
+          fi
+
+      - name: Initialize Terraform with real config
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          cd terraform
+          
+          # Initialize with proper backend
+          terraform init || {
+            echo "❌ Terraform init failed!"
+            exit 1
+          }
+          
+          # Try to select the workspace
+          terraform workspace select $ENV || {
+            echo "⚠️ Workspace $ENV doesn't exist, nothing to destroy"
+            exit 0
+          }
+      
+      - name: Stop ASG instance refresh and set capacity to 0
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          ASG_NAME=$(aws autoscaling describe-auto-scaling-groups \
+            --filters "Name=tag:Environment,Values=$ENV" "Name=tag:Project,Values=secure-app-infra" \
+            --query "AutoScalingGroups[0].AutoScalingGroupName" --output text)
+            
+          if [[ "$ASG_NAME" != "None" && -n "$ASG_NAME" ]]; then
+            echo "Found ASG: $ASG_NAME - setting capacity to 0"
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name "$ASG_NAME" \
+              --min-size 0 --max-size 0 --desired-capacity 0
+              
+            # Cancel any instance refreshes
+            aws autoscaling cancel-instance-refresh --auto-scaling-group-name "$ASG_NAME" || true
+            
+            # Wait for instances to terminate
+            echo "Waiting for instances to terminate..."
+            TIMEOUT=300
+            START_TIME=$(date +%s)
+            
+            while true; do
+              CURRENT_TIME=$(date +%s)
+              ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+              
+              if [ $ELAPSED_TIME -gt $TIMEOUT ]; then
+                echo "⚠️ Timeout waiting for instances to terminate, continuing anyway"
+                break
+              fi
+              
+              INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
+                --auto-scaling-group-name "$ASG_NAME" \
+                --query "AutoScalingGroups[0].Instances" --output text)
+                
+              if [[ -z "$INSTANCES" ]]; then
+                echo "✅ All instances terminated"
+                break
+              else
+                echo "⏳ Waiting for instances to terminate... ($ELAPSED_TIME seconds elapsed)"
+                sleep 15
+              fi
+            done
+          else
+            echo "No ASG found with name containing 'secure-app-infra-$ENV'"
+          fi
+      
+      - name: Destroy load balancer resources first
+        run: |
+          cd terraform
+          echo "Destroying load balancer resources first to avoid dependency issues..."
+          terraform destroy -target=module.alb -auto-approve || {
+            echo "⚠️ ALB destroy failed, but continuing with other resources"
+          }
+      
+      - name: Destroy compute resources next  
+        run: |
+          cd terraform
+          echo "Destroying compute resources..."
+          terraform destroy -target=module.asg -auto-approve || {
+            echo "⚠️ ASG destroy failed, but continuing with other resources"
+          }
+          terraform destroy -target=module.bastion -auto-approve || {
+            echo "⚠️ Bastion destroy failed, but continuing with other resources"
+          }
+        continue-on-error: true
+      
+      - name: Destroy remaining infrastructure
+        run: |
+          cd terraform
+          echo "🚨 DESTROYING ALL REMAINING INFRASTRUCTURE IN ${{ github.event.inputs.environment }} ENVIRONMENT 🚨"
+          terraform destroy -auto-approve || {
+            echo "⚠️ Some resources may have failed to destroy. Retrying with specific targets..."
+            
+            # Try to destroy any network resources explicitly
+            terraform destroy -target=module.vpc -auto-approve || true
+            
+            # Final attempt at full destroy
+            terraform destroy -auto-approve || true
+          }
+          
+      - name: Clean up orphaned resources
+        if: success() || failure()  # Run even if terraform destroy fails
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          
+          echo "Checking for orphaned security groups..."
+          SG_IDS=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:Environment,Values=$ENV" "Name=tag:Project,Values=secure-app-infra" \
+            --query "SecurityGroups[*].GroupId" --output text)
+            
+          if [ -n "$SG_IDS" ]; then
+            for SG_ID in $SG_IDS; do
+              echo "Deleting security group: $SG_ID"
+              aws ec2 delete-security-group --group-id "$SG_ID" || true
+            done
+          fi
+          
+          echo "Checking for orphaned IAM roles and policies..."
+          ROLE_NAMES=$(aws iam list-roles --query "Roles[?contains(RoleName, 'secure-app-infra-$ENV')].RoleName" --output text)
+          
+          if [ -n "$ROLE_NAMES" ]; then
+            for ROLE_NAME in $ROLE_NAMES; do
+              # First detach policies
+              POLICY_ARNS=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query "AttachedPolicies[*].PolicyArn" --output text)
+              
+              for POLICY_ARN in $POLICY_ARNS; do
+                echo "Detaching policy $POLICY_ARN from role $ROLE_NAME"
+                aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN" || true
+              done
+              
+              # Delete the role
+              echo "Deleting IAM role: $ROLE_NAME"
+              aws iam delete-role --role-name "$ROLE_NAME" || true
+            done
+          fi
+          
+      - name: Delete AMIs
+        if: success() || failure()  # Run even if terraform destroy fails
+        run: |
+          echo "Searching for AMIs with name prefix 'secure-app-infra-'"
+          AMI_IDS=$(aws ec2 describe-images --owners self --filters "Name=name,Values=secure-app-infra-*" --query "Images[*].ImageId" --output text)
+          
+          if [ -n "$AMI_IDS" ]; then
+            echo "Found AMIs to delete: $AMI_IDS"
+            
+            for AMI_ID in $AMI_IDS; do
+              # Deregister AMI first
+              echo "Deregistering AMI: $AMI_ID"
+              aws ec2 deregister-image --image-id $AMI_ID
+              
+              # Find and delete associated snapshots
+              echo "Finding snapshots for AMI: $AMI_ID"
+              SNAPSHOTS=$(aws ec2 describe-snapshots --filters "Name=description,Values=*$AMI_ID*" --query "Snapshots[*].SnapshotId" --output text)
+              
+              if [ -n "$SNAPSHOTS" ]; then
+                for SNAPSHOT in $SNAPSHOTS; do
+                  echo "Deleting snapshot: $SNAPSHOT"
+                  aws ec2 delete-snapshot --snapshot-id $SNAPSHOT
+                done
+              else
+                echo "No snapshots found for AMI: $AMI_ID"
+              fi
+            done
+          else
+            echo "No AMIs found to delete"
+          fi
+          
+      - name: Update workflow status
+        if: success() || failure()
+        run: |
+          # Create status file to mark infrastructure as destroyed
+          echo "{\"status\":\"destroyed\",\"timestamp\":\"$(date -u '+%Y-%m-%d %H:%M:%S')\",\"actor\":\"${{ github.actor }}\"}" > status.json
+          
+          # Upload to S3
+          aws s3 cp status.json s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json
+          
+          echo "Workflow status updated to 'destroyed' at $(date -u '+%Y-%m-%d %H:%M:%S')"

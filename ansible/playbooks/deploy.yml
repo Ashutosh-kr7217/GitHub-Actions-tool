@@ -1,0 +1,141 @@
+---
+- name: Deploy static website
+  hosts: tag_Name_secure_app_infra_dev_app*
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Debug - List all hosts being targeted
+      debug:
+        msg: "Targeting host: {{ inventory_hostname }} with IP: {{ ansible_host }}"
+    
+    - name: Wait for system to become reachable
+      wait_for_connection:
+        delay: 5
+        timeout: 300
+      
+    - name: Gather system facts
+      setup:
+      
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
+        enabled: yes
+      notify: verify nginx status
+      
+    - name: verify nginx status
+      shell: systemctl status nginx
+      register: nginx_status
+      changed_when: false
+      listen: restart nginx
+      
+    - name: show nginx status
+      debug:
+        msg: "{{ nginx_status.stdout_lines }}"
+      listen: restart nginx
+  
+  tasks:
+    - name: Create configuration backup directory
+      file:
+        path: /etc/nginx/conf.d.bak
+        state: directory
+        mode: '0755'
+      
+    - name: Backup existing configuration
+      shell: cp -r /etc/nginx/conf.d/* /etc/nginx/conf.d.bak/
+      args:
+        creates: /etc/nginx/conf.d.bak/default.conf
+      changed_when: false
+        
+    - name: Update yum cache
+      yum:
+        update_cache: yes
+      
+    - name: Ensure nginx is installed
+      yum:
+        name: nginx
+        state: present
+      register: nginx_install
+      
+    - name: Ensure web directory exists
+      file:
+        path: /usr/share/nginx/html
+        state: directory
+        owner: nginx
+        group: nginx
+        mode: '0755'
+        
+    - name: Create nginx site configuration
+      template:
+        src: ../roles/nginx/templates/vhost.conf.j2
+        dest: /etc/nginx/conf.d/default.conf
+        owner: root
+        group: root
+        mode: '0644'
+        validate: 'nginx -t -c %s'
+      notify: restart nginx
+        
+    - name: Copy website files
+      copy:
+        src: "{{ item }}"
+        dest: /usr/share/nginx/html/
+        owner: nginx
+        group: nginx
+        mode: '0644'
+      with_fileglob:
+        - "../../app/*"
+      register: files_copied
+      
+    - name: Set nginx ownership
+      file:
+        path: /usr/share/nginx/html
+        state: directory
+        owner: nginx
+        group: nginx
+        recurse: yes
+        
+    - name: Create deployment marker
+      copy:
+        content: |
+          Deployment Date: {{ ansible_date_time.iso8601 }}
+          Deployed By: Ansible
+          Host: {{ inventory_hostname }}
+        dest: /usr/share/nginx/html/deployment.txt
+        owner: nginx
+        group: nginx
+        mode: '0644'
+      
+    - name: Ensure nginx is running
+      systemd:
+        name: nginx
+        state: started
+        enabled: yes
+      register: nginx_service
+      
+    - name: Restart nginx if files were copied
+      systemd:
+        name: nginx
+        state: restarted
+      when: files_copied.changed
+      
+    - name: Verify nginx is running
+      command: systemctl status nginx
+      register: nginx_status
+      changed_when: false
+      
+    - name: Display nginx status
+      debug:
+        msg: "{{ nginx_status.stdout_lines }}"
+      
+    - name: Test local website access
+      uri:
+        url: http://localhost
+        return_content: yes
+        status_code: 200
+      register: webpage
+      
+    - name: Verify content
+      debug:
+        msg: "Website is accessible locally and contains {{ webpage.content | length }} bytes"

@@ -1,0 +1,101 @@
+name: Workflow Status Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action (set-status or get-status)'
+        required: true
+        default: 'get-status'
+        type: choice
+        options:
+          - get-status
+          - set-status
+      status:
+        description: 'Status to set (bootstrapped, updated, destroyed)'
+        required: false
+        default: 'bootstrapped'
+        type: choice
+        options:
+          - bootstrapped
+          - updated
+          - destroyed
+        
+jobs:
+  manage-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+          
+      - name: Check S3 bucket
+        id: check_bucket
+        run: |
+          BUCKET_NAME="tf-state-aws-infra01"
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "S3 bucket $BUCKET_NAME exists"
+            echo "bucket_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "S3 bucket $BUCKET_NAME does not exist"
+            echo "bucket_exists=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Create bucket if needed
+        if: steps.check_bucket.outputs.bucket_exists == 'false' && github.event.inputs.action == 'set-status'
+        run: |
+          BUCKET_NAME="tf-state-aws-infra01"
+          
+          # Create bucket
+          aws s3 mb "s3://$BUCKET_NAME" --region ap-south-1
+            
+          # Enable versioning
+          aws s3api put-bucket-versioning \
+            --bucket "$BUCKET_NAME" \
+            --versioning-configuration Status=Enabled
+              
+          # Block public access
+          aws s3api put-public-access-block \
+            --bucket "$BUCKET_NAME" \
+            --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+          
+          echo "Created S3 bucket for status management"
+          
+      - name: Set workflow status
+        if: github.event.inputs.action == 'set-status'
+        run: |
+          STATUS="${{ github.event.inputs.status }}"
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M:%S')
+          ACTOR="${{ github.actor }}"
+          
+          # Create status file
+          echo "{\"status\":\"$STATUS\",\"timestamp\":\"$TIMESTAMP\",\"actor\":\"$ACTOR\"}" > status.json
+          
+          # Upload to S3
+          aws s3 cp status.json s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json
+          
+          echo "Status set to $STATUS at $TIMESTAMP by $ACTOR"
+          
+      - name: Get workflow status
+        if: github.event.inputs.action == 'get-status'
+        run: |
+          # Download status file if it exists
+          if aws s3 ls s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json 2>/dev/null; then
+            aws s3 cp s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json ./status.json
+            
+            # Display formatted status info
+            echo "Current workflow status:"
+            echo "------------------------"
+            STATUS=$(cat status.json | jq -r '.status')
+            TIMESTAMP=$(cat status.json | jq -r '.timestamp')
+            ACTOR=$(cat status.json | jq -r '.actor')
+            
+            echo "Status: $STATUS"
+            echo "Last updated: $TIMESTAMP"
+            echo "Updated by: $ACTOR"
+          else
+            echo "No workflow status found. Infrastructure has not been bootstrapped yet."
+          fi

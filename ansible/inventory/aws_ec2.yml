@@ -1,0 +1,30 @@
+---
+plugin: aws_ec2
+regions:
+  - ap-south-1
+keyed_groups:
+  - prefix: tag
+    key: tags
+  - key: tags.Project
+    prefix: project
+  - key: tags.Environment
+    prefix: env
+  - key: tags.Name
+    separator: ""
+  - key: instance_type
+    prefix: instance_type
+  - key: placement.availability_zone
+    prefix: az
+filters:
+  tag:ManagedBy: Terraform
+  instance-state-name: running
+compose:
+  ansible_host: private_ip_address
+  environment: tags['Environment'] | default('dev')
+  instance_id: instance_id
+  instance_type: instance_type
+  private_dns_name: private_dns_name
+hostnames:
+  - tag:Name
+  - private-dns-name
+  - private-ip-address

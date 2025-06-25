@@ -1,0 +1,113 @@
+{
+  "variables": {
+    "aws_region": "ap-south-1",
+    "app_version": "{{env `APP_VERSION`}}",
+    "build_timestamp": "{{env `BUILD_TIMESTAMP`}}",
+    "subnet_id": "{{env `SUBNET_ID`}}"
+  },
+  "builders": [
+    {
+      "type": "amazon-ebs",
+      "region": "{{user `aws_region`}}",
+      "subnet_id": "{{user `subnet_id`}}",
+      "associate_public_ip_address": true,
+      "communicator": "ssh",
+      "ssh_username": "ec2-user",
+      "ssh_interface": "public_ip",
+      "skip_profile_validation": true,
+      "source_ami_filter": {
+        "filters": {
+          "virtualization-type": "hvm",
+          "name": "amzn2-ami-hvm-*-x86_64-gp2",
+          "root-device-type": "ebs"
+        },
+        "owners": ["amazon"],
+        "most_recent": true
+      },
+      "instance_type": "t3.small",
+      "ami_name": "secure-app-infra-{{user `build_timestamp`}}",
+      "ami_description": "Secure App Infrastructure AMI with NGINX and application code",
+      "ami_regions": ["ap-south-1"],
+      "launch_block_device_mappings": [
+        {
+          "device_name": "/dev/xvda",
+          "volume_size": 8,
+          "volume_type": "gp3",
+          "delete_on_termination": true,
+          "encrypted": true
+        }
+      ],
+      "run_tags": {
+        "Name": "packer-builder-secure-app-infra",
+        "Environment": "build",
+        "ManagedBy": "Packer"
+      },
+      "tags": {
+        "Name": "secure-app-infra-ami",
+        "Environment": "dev",
+        "Project": "secure-app-infra", 
+        "BuildTimestamp": "{{user `build_timestamp`}}",
+        "AppVersion": "{{user `app_version`}}",
+        "ManagedBy": "Packer",
+        "CreatedOn": "{{isotime \"2006-01-02\"}}"
+      }
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "inline": [
+        "echo 'Starting AMI build process - {{user `build_timestamp`}}'",
+        "sudo yum update -y",
+        "sudo amazon-linux-extras enable nginx1",
+        "sudo yum install -y nginx git wget unzip bash-completion vim"
+      ]
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "echo 'Setting up basic security measures'",
+        "sudo sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config",
+        "sudo sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config",
+        "echo 'Hardening complete'"
+      ]
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "mkdir -p /tmp/app",
+        "echo 'Created /tmp/app directory'"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "../deploy/",
+      "destination": "/tmp/app"
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "if [ ! -d \"/tmp/app\" ] || [ -z \"$(ls -A /tmp/app 2>/dev/null)\" ]; then",
+        "  echo 'ERROR: /tmp/app directory is empty or missing'",
+        "  echo 'Creating minimal content...'",
+        "  mkdir -p /tmp/app",
+        "  echo '<html><body><h1>Default Page</h1><p>Build: {{user `build_timestamp`}}</p></body></html>' > /tmp/app/index.html",
+        "fi",
+        "sudo mkdir -p /usr/share/nginx/html",
+        "sudo cp -rv /tmp/app/* /usr/share/nginx/html/ || echo 'Warning: Copy failed but continuing'",
+        "sudo chown -R nginx:nginx /usr/share/nginx/html",
+        "echo 'Build Version: {{user `app_version`}}' | sudo tee /usr/share/nginx/html/build-info.txt",
+        "echo 'Build Timestamp: {{user `build_timestamp`}}' | sudo tee -a /usr/share/nginx/html/build-info.txt",
+        "echo 'Build Date: {{isotime \"2006-01-02 15:04:05\"}}' | sudo tee -a /usr/share/nginx/html/build-info.txt",
+        "sudo systemctl enable nginx"
+      ]
+    }
+  ],
+  "post-processors": [
+    {
+      "type": "manifest",
+      "output": "packer-manifest.json",
+      "strip_path": true
+    }
+  ]
+}

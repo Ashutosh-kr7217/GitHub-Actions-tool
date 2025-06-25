@@ -1,0 +1,12 @@
+---
+- name: Configure base security
+  hosts: tag_Project_secure_app_infra
+  become: yes
+  roles:
+    - security
+
+- name: Configure web servers
+  hosts: tag_Project_secure_app_infra
+  become: yes
+  roles:
+    - nginx
