@@ -1,4 +1,4 @@
-name: Destroy Infrastructure test
+name: Destroy final
 
 on:
   workflow_dispatch:
