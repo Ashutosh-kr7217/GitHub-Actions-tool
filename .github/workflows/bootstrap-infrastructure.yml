@@ -51,7 +51,7 @@ jobs:
       - name: Check S3 state bucket
         id: check_s3
         run: |
-          BUCKET_NAME="tf-state-aws-infra01"
+          BUCKET_NAME="tf-state-aws-infra011"
           if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             echo "S3 bucket $BUCKET_NAME exists"
             echo "exists=true" >> $GITHUB_OUTPUT
@@ -137,7 +137,7 @@ jobs:
       - name: Create S3 bucket for Terraform state
         if: needs.check-prerequisites.outputs.state_bucket_exists == 'false'
         run: |
-          BUCKET_NAME="tf-state-aws-infra01"
+          BUCKET_NAME="tf-state-aws-infra011"
           
           # Create bucket
           aws s3 mb "s3://$BUCKET_NAME" --region ${{ env.AWS_REGION }}
@@ -638,6 +638,6 @@ jobs:
           echo "{\"status\":\"bootstrapped\",\"timestamp\":\"$(date -u '+%Y-%m-%d %H:%M:%S')\",\"actor\":\"${{ github.actor }}\"}" > status.json
           
           # Upload to S3
-          aws s3 cp status.json s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json
+          aws s3 cp status.json s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json
           
           echo "Bootstrap status recorded successfully"

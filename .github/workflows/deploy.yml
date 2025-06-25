@@ -83,14 +83,14 @@ jobs:
       - name: Check bootstrap status
         run: |
           # Check if infrastructure is bootstrapped
-          if ! aws s3 ls s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json 2>/dev/null; then
+          if ! aws s3 ls s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json 2>/dev/null; then
             echo "⚠️ Infrastructure bootstrap status not found!"
             echo "Run bootstrap-infrastructure.yml workflow first"
             exit 1
           fi
           
           # Download status file to confirm bootstrap status
-          aws s3 cp s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json ./status.json
+          aws s3 cp s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json ./status.json
           STATUS=$(cat status.json | jq -r '.status')
           
           if [[ "$STATUS" != "bootstrapped" ]]; then
@@ -350,7 +350,7 @@ jobs:
         id: check_backend
         run: |
           # Check if S3 bucket exists
-          BUCKET="tf-state-aws-infra01"
+          BUCKET="tf-state-aws-infra011"
           if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
             echo "⚠️ S3 bucket for backend does not exist!"
             echo "Run bootstrap-infrastructure.yml workflow first"

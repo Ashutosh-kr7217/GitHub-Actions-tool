@@ -97,7 +97,7 @@ jobs:
             }
             
             backend "s3" {
-              bucket         = "tf-state-aws-infra01"
+              bucket         = "tf-state-aws-infra011"
               key            = "secure-app-infra/${{ github.event.inputs.environment }}/terraform.tfstate"
               region         = "ap-south-1"
               dynamodb_table = "terraform-lock"

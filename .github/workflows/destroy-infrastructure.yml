@@ -65,15 +65,15 @@ jobs:
           ENVIRONMENT=${{ github.event.inputs.environment }}
           
           # Create backup directory if it doesn't exist
-          aws s3api put-object --bucket tf-state-aws-infra01 --key secure-app-infra/$ENVIRONMENT/backups/ || true
+          aws s3api put-object --bucket tf-state-aws-infra011 --key secure-app-infra/$ENVIRONMENT/backups/ || true
           
           # Create backup of Terraform state
-          if aws s3 ls s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/terraform.tfstate; then
+          if aws s3 ls s3://tf-state-aws-infra011/secure-app-infra/$ENVIRONMENT/terraform.tfstate; then
             aws s3 cp \
-              s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/terraform.tfstate \
-              s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/backups/terraform.tfstate.$TIMESTAMP
+              s3://tf-state-aws-infra011/secure-app-infra/$ENVIRONMENT/terraform.tfstate \
+              s3://tf-state-aws-infra011/secure-app-infra/$ENVIRONMENT/backups/terraform.tfstate.$TIMESTAMP
               
-            echo "✅ Created backup at s3://tf-state-aws-infra01/secure-app-infra/$ENVIRONMENT/backups/terraform.tfstate.$TIMESTAMP"
+            echo "✅ Created backup at s3://tf-state-aws-infra011/secure-app-infra/$ENVIRONMENT/backups/terraform.tfstate.$TIMESTAMP"
           else 
             echo "⚠️ No state file found to backup for environment $ENVIRONMENT"
           fi
@@ -288,6 +288,6 @@ jobs:
           echo "{\"status\":\"destroyed\",\"timestamp\":\"$(date -u '+%Y-%m-%d %H:%M:%S')\",\"actor\":\"${{ github.actor }}\"}" > status.json
           
           # Upload to S3
-          aws s3 cp status.json s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json
+          aws s3 cp status.json s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json
           
           echo "Workflow status updated to 'destroyed' at $(date -u '+%Y-%m-%d %H:%M:%S')"

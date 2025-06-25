@@ -35,7 +35,7 @@ jobs:
       - name: Check S3 bucket
         id: check_bucket
         run: |
-          BUCKET_NAME="tf-state-aws-infra01"
+          BUCKET_NAME="tf-state-aws-infra011"
           if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
             echo "S3 bucket $BUCKET_NAME exists"
             echo "bucket_exists=true" >> $GITHUB_OUTPUT
@@ -47,7 +47,7 @@ jobs:
       - name: Create bucket if needed
         if: steps.check_bucket.outputs.bucket_exists == 'false' && github.event.inputs.action == 'set-status'
         run: |
-          BUCKET_NAME="tf-state-aws-infra01"
+          BUCKET_NAME="tf-state-aws-infra011"
           
           # Create bucket
           aws s3 mb "s3://$BUCKET_NAME" --region ap-south-1
@@ -83,8 +83,8 @@ jobs:
         if: github.event.inputs.action == 'get-status'
         run: |
           # Download status file if it exists
-          if aws s3 ls s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json 2>/dev/null; then
-            aws s3 cp s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json ./status.json
+          if aws s3 ls s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json 2>/dev/null; then
+            aws s3 cp s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json ./status.json
             
             # Display formatted status info
             echo "Current workflow status:"

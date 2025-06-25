@@ -32,7 +32,7 @@ jobs:
         id: check
         run: |
           # Try to download status file
-          if aws s3 cp s3://tf-state-aws-infra01/secure-app-infra/workflow-status.json ./status.json 2>/dev/null; then
+          if aws s3 cp s3://tf-state-aws-infra011/secure-app-infra/workflow-status.json ./status.json 2>/dev/null; then
             STATUS=$(cat status.json | jq -r '.status')
             if [[ "$STATUS" == "bootstrapped" ]]; then
               echo "Infrastructure is bootstrapped, proceeding with AMI build"
@@ -449,7 +449,7 @@ jobs:
           cat > tf-update/main.tf << EOF
           terraform {
             backend "s3" {
-              bucket         = "tf-state-aws-infra01"
+              bucket         = "tf-state-aws-infra011"
               key            = "secure-app-infra/dev/terraform.tfstate"
               region         = "ap-south-1"
               dynamodb_table = "terraform-lock"
@@ -465,7 +465,7 @@ jobs:
           data "terraform_remote_state" "current" {
             backend = "s3"
             config = {
-              bucket         = "tf-state-aws-infra01"
+              bucket         = "tf-state-aws-infra011"
               key            = "secure-app-infra/dev/terraform.tfstate"
               region         = "ap-south-1"
             }
