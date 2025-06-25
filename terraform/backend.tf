@@ -10,7 +10,7 @@ terraform {
 
   # Ensure these resources actually exist before running pipeline
   backend "s3" {
-    bucket         = "tf-state-aws-infra01"
+    bucket         = "tf-state-aws-infra011"
     key            = "secure-app-infra/dev/terraform.tfstate"
     region         = "ap-south-1"
     encrypt        = true

@@ -19,9 +19,9 @@ private_subnets = {
 }
 
 ssh_cidr_blocks       = ["0.0.0.0/0"]
-bastion_key_name      = "DevPro-HP-key"
+bastion_key_name      = "GitHub-Actions"
 bastion_instance_type = "t3.small"
 
-app_key_name       = "DevPro-HP-key"
+app_key_name       = "GitHub-Actions"
 app_instance_type  = "t3.small"
 #app_instance_count = 2

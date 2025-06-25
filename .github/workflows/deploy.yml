@@ -1,9 +1,9 @@
 name: Infrastructure and Application Deployment
 
-on:
+#on:
   #push:
-    branches: [ main ]
-    paths-ignore:
+    #branches: [ main ]
+    #paths-ignore:
       - 'app/**'  # Ignore app changes since they trigger the build-ami workflow
       - '**.md'   # Ignore markdown files
       - '.github/ISSUE_TEMPLATE/**'
